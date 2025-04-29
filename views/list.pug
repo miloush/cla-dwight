@@ -1,0 +1,116 @@
+html(xmlns="http://www.w3.org/1999/xhtml")
+head
+    meta(charset="utf-8")
+    title CLA signees
+    style(type="text/css").
+        * { font-family: 'Segoe UI', 'Lucida Grande', sans-serif }
+        #header { margin: 1em 0; display: flex; justify-content: space-between }
+        #age a { display: inline-block; background: green; color: white; border-radius: 5px; padding: 0.25em 0.5em; margin-left: 1em; text-decoration: none }
+        td, th { border: solid 1px silver; padding: 0.5em; }
+        th { position: sticky; top: 0; background: white; border: solid 2px silver }
+        td:nth-child(-n+#{fields.length+1}) { word-break: break-word }          /* user input columns */
+        td:last-child { word-break: break-word }                                /* user input column */
+        td:nth-last-child(-n+4):nth-last-child(n+2) { text-wrap-mode: nowrap; } /* date columns */
+        table { border-collapse: collapse; border: solid 2px silver; width: 100% }
+        tbody:nth-child(even) { background: whitesmoke }
+        tbody tr:nth-child(n+2) { display: none; }
+        tr.revoked { background: pink }
+        tbody input { padding: 0 0.25em; margin-left: 0.25em }
+    script(type="text/javascript").
+        var tableCopy; // it is much faster to filter table not in DOM and then replace it
+        function onloaded() {
+            var sigs = document.getElementById("signatures");
+            tableCopy = sigs.cloneNode(true);
+        }
+        function e(el) {
+            var tr = el.parentElement.parentElement;
+            while (tr.nextElementSibling) {
+                tr = tr.nextElementSibling;
+                tr.style.display = "table-row";
+            }
+            el.style.display = "none";
+        }
+        // which columns use for filtering, change in the template (also update the search tooltip)
+        var filterFields = [-1, #{fields.indexOf('name')}, #{fields.indexOf('email')}];
+        var filtering = 0;
+        var filterText = null;
+        function triggerFilter(text) {
+            filterText = text.toLowerCase();
+            if (filtering)
+                window.clearTimeout(filtering);
+            filtering = window.setTimeout(filter, 500);
+        }
+        function filter() {
+            if (tableCopy) {
+                var text = null;
+                while (text != filterText) {
+                    text = filterText;
+                    var sigs = tableCopy.cloneNode(true);
+                    var tbody = sigs.firstElementChild.nextElementSibling;
+                    while (tbody) {
+                        if (isMatch(tbody.firstElementChild)) {
+                            tbody = tbody.nextElementSibling;
+                        }
+                        else {
+                            next = tbody.nextElementSibling;
+                            sigs.removeChild(tbody);
+                            tbody = next;
+                        }
+                    }
+                }
+                document.body.replaceChild(sigs, document.getElementById("signatures"));
+            }
+            filtering = 0;
+        }
+        function isMatch(tr) {
+            var tds = tr.getElementsByTagName("TD");
+            var tdFields = filterFields.map(function(i) { return tds[i+1] });
+            for (var i = 0; i < tdFields.length; i++)
+                if (tdFields[i].innerText.toLowerCase().indexOf(filterText) >= 0)
+                    return true;
+
+            return false;
+        }
+body(onload="onloaded()")
+    div(id="header")
+        div(id="age")
+            if age
+                | This data is #{age} old.
+                a(href="?reload=true") Reload
+        div(id="count") #{sortedSignees.length} users, #{signatureCount} signatures.
+        div(id="filter")
+            input(type="search", placeholder="Filter...", autocomplete="off", oninput="triggerFilter(this.value)", title="Search user, name and email")
+
+    table(id="signatures")
+        thead
+            tr
+                th user
+                for field of fields
+                    th #{field}
+                th filename
+                th version
+                th signed
+                th revoked
+                th origin
+        for signee of sortedSignees
+            tbody
+                for signature of signee[1]
+                    tr(class=signature.revoked_at ? "revoked" : false)    
+                        if (signee[1].length > 1 && signature == signee[1][0])
+                            td #{signature.user}
+                               input(type="button", value="+", onclick="e(this)")
+                        else
+                            td #{signature.user}
+                        
+                        for field of fields
+                            td #{signature.custom_fields ? signature.custom_fields[field] : false}
+                        td 
+                            a(href=signature.gist_url) #{signature.gist_filename}
+                        if signature.gist_committed_at
+                            td(title=signature.gist_committed_at)
+                                a(href=`${signature.gist_url}/{signature.gist_version}`) #{signature.gist_committed_at.substring(0, 10)}
+                        else
+                            td #{signature.gist_version}
+                        td(title=signature.created_at) #{signature.created_at.substring(0, 10)}
+                        td(title=signature.revoked_at) #{signature.revoked_at ? signature.revoked_at.substring(0, 10) : ""}
+                        td #{signature.origin}

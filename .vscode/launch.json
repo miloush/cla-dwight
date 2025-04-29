@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "localhost (Edge)",
+      "type": "edge",
+      "request": "launch",
+      "url": "http://localhost:3000/status",
+      "webRoot": "${workspaceFolder}"
+    },
+    {
+      "name": "localhost (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3000/status",
+      "webRoot": "${workspaceFolder}"
+    },
+    {
+      "name": "Launch cla-dwight",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}",
+      "stopOnEntry": true
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Launch Node and Browser",
+      "configurations": [
+        "Launch cla-dwight",
+        "localhost (Edge)"
+      ]
+    }
+  ]
+}

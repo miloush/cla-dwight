@@ -1,0 +1,20 @@
+{
+  "name": "cla-dwight",
+  "version": "1.0.0",
+  "description": "CLA assistant to the regional manager",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "nodemon server.mjs"
+  },
+  "dependencies": {
+    "axios": "^1.x",
+    "dotenv": "^16.x",
+    "express": "^5.x",
+    "pug": "^3.x",
+    "xmlbuilder2": "^3.x"
+  },
+  "devDependencies": {
+    "nodemon": "^3.x"
+  }
+}
