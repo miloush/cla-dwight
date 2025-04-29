@@ -1,6 +1,6 @@
 # CLA-dwight
 
-[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.md)
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.txt)
 
 A proxy to https://github.com/cla-assistant/cla-assistant API for checking CLA signatures within an organization. The CLA assistant requires a GitHub personal access token with `admin:org` rights. The purpose of this service is to allow checking CLA status of contributors without having to hand out an organizational admin token to staff (instead, it is must be provided as an environmental variable). The data from CLA assistant is cached and needs to be explicitly reloaded.
 
