@@ -26,6 +26,7 @@ Built using Node.js, Express 5 and pug.
 | `BASE`    | `/`       | URL prefix to serve (e.g. `/cla` would serve `example.com/cla/list`)
 | `CLA_ASSISTANT_URL`   | `https://cla-assistant.io/` | Base URI for the CLA assistant 
 | `CLA_LIST_AUTH` |     | If present, the `/list` endpoint will require basic HTTP authorization (the browser will ask for username and password). The value should be space-separated base64-encoded `username:password` values.<br/>For example, to require login and allow user _test_ with password _123_, you would set this to `dGVzdDoxMjM=`
+| `CLA_FILECACHE` |     | Directory path where to store responses from CLA assistant as files. If present, the file data will be used when the call to the CLA assistant fails (unless reload is explicitly requested).
 | `GITHUB_ORGID` | **required** | GitHub organization ID. This is a number that can be obtained from  `https://api.github.com/orgs/{organization username}` (the `"id"` attribute). 
 | `GITHUB_ORGTOKEN` | **required** | PAT token with `admin:org` access to the GitHub organization for which to check signatures.
 

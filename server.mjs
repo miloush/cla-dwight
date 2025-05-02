@@ -33,6 +33,9 @@
 //    CLA_ASSISTANT_URL   Base URI for the CLA-assistant (default: https://cla-assistant.io/).
 //    CLA_LIST_AUTH       If present, /list will require basic HTTP authorization.
 //                        The value should be space-separated base64-encoded username:password values.
+//    CLA_FILECACHE       Directory path where to store responses from CLA assistant as files.
+//                        If present, the file data will be used when the call to the CLA assistant fails,
+//                        unless reload is explicitly requested.
 //
 //    GITHUB_ORGID (required)     GitHub organization ID. This is a number and can be obtained from
 //                                https://api.github.com/orgs/{organization username} (the id attribute).
@@ -44,6 +47,8 @@ import axios from 'axios';
 import dotenv from 'dotenv';
 import express from 'express';
 import xml from 'xmlbuilder2';
+import fs from 'fs/promises';
+import path from 'node:path';
 
 const app = express();
 const router = express.Router();
@@ -60,30 +65,117 @@ const CLA_LIST_AUTH = process.env.CLA_LIST_AUTH ? process.env.CLA_LIST_AUTH.spli
 const GITHUB_ORGID = process.env.GITHUB_ORGID;
 const GITHUB_ORGTOKEN = process.env.GITHUB_ORGTOKEN;
 
+const CLA_FILECACHE = process.env.CLA_FILECACHE || "";
+const CLA_FILE_GIST = path.join(CLA_FILECACHE, "gist.json");
+const CLA_FILE_SIGNEES = path.join(CLA_FILECACHE, "signees.json");
+
 var globalError = false;
 var globalGist = null;
 var globalSignees = null;
 
-if (!GITHUB_ORGTOKEN) globalError ="GITHUB_ORGTOKEN environment variable not set.";
+if (!GITHUB_ORGTOKEN) globalError = "GITHUB_ORGTOKEN environment variable not set.";
 if (!GITHUB_ORGID) globalError = "GITHUB_ORGID environment variable not set.";
 
 if (!globalError)
+    await globalReload(/*ignoreErrors*/ true);
+
+//#region Cache and File Cache
+
+async function globalReload(ignoreErrors, disableCache)
 {
+    let gist = null;
+    let signees = null;
+
     try
     {
-        globalGist = await getGist(); // { url, filename, verions[]: { version, committed, url } }
-        globalSignees = await getSignees(); // Map of [] keyed by username (list of signatures per user)
+        globalGist = gist = await getGist(); // { url, filename, verions[]: { version, committed, url } }
+        globalSignees = signees = await getSignees(); // Map of [] keyed by username (list of signatures per user)
+        globalError = null;
     }
-    catch (error) { globalError = error; }
+    catch (ex)
+    {
+        console.error(ex);
+
+        if (CLA_FILECACHE && !disableCache)
+            try
+            {
+                console.info("Trying data from file cache instead...");
+                globalGist = await readCacheFile(CLA_FILE_GIST);
+                globalSignees = await readCacheFile(CLA_FILE_SIGNEES);
+                return;
+            }
+            catch (exfs)
+            {
+                console.error(exfs);
+                ex = new AggregateError("Both CLA and file cache failed.", [ex, exfs]);
+            }
+
+        globalError = ex;
+        if (!ignoreErrors)
+            throw error;
+    }
+
+    if (CLA_FILECACHE && gist && signees)
+        try
+        {
+            await writeCacheFile(CLA_FILE_GIST, gist);
+            await writeCacheFile(CLA_FILE_SIGNEES, signees);
+        }
+        catch (ex)
+        {
+            console.error(ex);
+        }
 }
 
-if (globalError)
-    console.error(globalError);
+async function writeCacheFile(path, data)
+{
+    await fs.mkdir(CLA_FILECACHE, { recursive: true });
+
+    const dataJson = JSON.stringify(data, function (key, value)
+    {
+        if (this[key] instanceof Map)
+            value.__map = Array.from(value.entries());
+
+        else if (this[key] instanceof Date)
+            value = { __date: this[key].toJSON() };
+
+        return value;
+    })
+
+    await fs.writeFile(path, dataJson);
+}
+
+async function readCacheFile(path)
+{
+    const dataJson = await fs.readFile(path, { encoding: 'utf8' });
+    return JSON.parse(dataJson, function (key, value)
+    {
+        if (value)
+        {
+            if (value.__map)
+            {
+                const map = new Map(value.__map);
+                Object.assign(map, value);
+                return map;
+            }
+            else if (value.__date)
+            {
+                const date = new Date(value.__date);
+                Object.assign(date, value);
+                return date;
+            }
+            return value;
+        }
+    });
+}
+//#endregion
+
+//#region Web Server
 
 router.get('/status', (request, response) =>
 {
     if (globalError)
-        response.status(503).send(globalError);
+        response.status(503).send(globalError.message);
     else
         response.status(200).send("OK");
 });
@@ -92,9 +184,7 @@ router.get('/reload', async (request, response) =>
 {
     try
     {
-        globalGist = await getGist();
-        globalSignees = await getSignees();
-        globalError = null;
+        await globalReload(/*ignoreErrors*/ false, /*disableCache*/ true);
         response.status(200).send("OK");
     }
     catch (error)
@@ -107,10 +197,7 @@ router.get('/reload', async (request, response) =>
 router.get('/list/:username', async (request, response) =>
 {
     if (request.query.reload == "true")
-    {
-        globalGist = await getGist();
-        globalSignees = await getSignees();
-    }
+        await globalReload(/*ignoreErrors*/ false, /*disableCache*/ true);
 
     const signees = globalSignees;
     const signatures = signees.get(request.params.username);
@@ -162,8 +249,7 @@ router.get('/list', async (request, response) =>
     let fresh = false;
     if (request.query.reload == "true")
     {
-        globalGist = await getGist();
-        globalSignees = await getSignees();
+        await globalReload(/*ignoreErrors*/ false, /*disableCache*/ true);
         fresh = true;
     }
 
@@ -221,6 +307,9 @@ app.listen(PORT, () =>
 {
     console.log(`CLA-dwight running on port ${PORT}`);
 });
+//#endregion
+
+//#region CLA Assistant
 
 // Find gist for the organization
 function getGist()
@@ -295,7 +384,7 @@ async function getSignees()
     signees.timestamp = new Date();
 
     for (const signee of signees.values())
-        signee.sort(signatureComparer); 
+        signee.sort(signatureComparer);
 
     return signees;
     //      })
@@ -372,6 +461,9 @@ function needsAuthorization(request)
         return true;
     }
 }
+//#endregion
+
+//#region Helpers
 
 // Naive date diff formatting
 function formatTimeSpan(ms)
@@ -415,3 +507,5 @@ function signeeComparer(a, b)
     let val = signatureComparer(a[1][0], b[1][0]);
     return val;
 }
+
+//#endregion

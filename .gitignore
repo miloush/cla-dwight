@@ -5,6 +5,7 @@
 
 /.env
 /package-lock.json
+cache/
 
 # User-specific files
 *.rsuser
