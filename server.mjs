@@ -33,6 +33,8 @@
 //    CLA_ASSISTANT_URL   Base URI for the CLA-assistant (default: https://cla-assistant.io/).
 //    CLA_LIST_AUTH       If present, /list will require basic HTTP authorization.
 //                        The value should be space-separated base64-encoded username:password values.
+//    CLA_AUTH_FIELDS     A space-separated list of field names in custom_fields that are considered private.
+//                        The /list/username API will remove these fields unless client authorizes.
 //    CLA_FILECACHE       Directory path where to store responses from CLA assistant as files.
 //                        If present, the file data will be used when the call to the CLA assistant fails,
 //                        unless reload is explicitly requested.
@@ -62,6 +64,7 @@ const PORT = process.env.PORT || 3000;
 const BASE = process.env.BASE || "/";
 const CLA_ASSISTANT_URL = process.env.CLA_ASSISTANT_URL || "https://cla-assistant.io/";
 const CLA_LIST_AUTH = process.env.CLA_LIST_AUTH ? process.env.CLA_LIST_AUTH.split(" ") : undefined;
+const CLA_AUTH_FIELDS = process.env.CLA_AUTH_FIELDS ? process.env.CLA_AUTH_FIELDS.split(" ") : undefined;
 const GITHUB_ORGID = process.env.GITHUB_ORGID;
 const GITHUB_ORGTOKEN = process.env.GITHUB_ORGTOKEN;
 
@@ -70,8 +73,8 @@ const CLA_FILE_GIST = path.join(CLA_FILECACHE, "gist.json");
 const CLA_FILE_SIGNEES = path.join(CLA_FILECACHE, "signees.json");
 
 var globalError = false;
-var globalGist = null;
-var globalSignees = null;
+var globalGist = null;  // { url, filename, verions[]: { version, committed, url } }
+var globalSignees = null; // Map of [] keyed by username (list of signatures per user)
 
 if (!GITHUB_ORGTOKEN) globalError = "GITHUB_ORGTOKEN environment variable not set.";
 if (!GITHUB_ORGID) globalError = "GITHUB_ORGID environment variable not set.";
@@ -88,8 +91,8 @@ async function globalReload(ignoreErrors, disableCache)
 
     try
     {
-        globalGist = gist = await getGist(); // { url, filename, verions[]: { version, committed, url } }
-        globalSignees = signees = await getSignees(); // Map of [] keyed by username (list of signatures per user)
+        globalGist = gist = await getGist();
+        globalSignees = signees = await getSignees();
         globalError = null;
     }
     catch (ex)
@@ -200,12 +203,29 @@ router.get('/list/:username', async (request, response) =>
         await globalReload(/*ignoreErrors*/ false, /*disableCache*/ true);
 
     const signees = globalSignees;
-    const signatures = signees.get(request.params.username);
+    let signatures = signees.get(request.params.username);
 
     if (!signatures)
     {
         response.status(404).send("Not found");
         return;
+    }
+
+    // remove private fields if not authorized
+    if (CLA_AUTH_FIELDS && needsAuthorization(request))
+    {
+        signatures = Array.from(signatures);
+        for (let i = 0; i < signatures.length; i++)
+        {
+            if (signatures[i].custom_fields)
+            {
+                const censored = { ...signatures[i] };
+                censored.custom_fields = { ...censored.custom_fields };
+                for (const property of CLA_AUTH_FIELDS)
+                    delete censored.custom_fields[property];
+                signatures[i] = censored;
+            }
+        }
     }
 
     response.status(200);
