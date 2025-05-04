@@ -74,7 +74,7 @@ const CLA_FILE_SIGNEES = path.join(CLA_FILECACHE, "signees.json");
 
 var globalError = false;
 var globalGist = null;  // { url, filename, verions[]: { version, committed, url } }
-var globalSignees = null; // Map of [] keyed by username (list of signatures per user)
+var globalSignees = null; // Map of [] keyed by username (sorted list of signatures per user, newest first)
 
 if (!GITHUB_ORGTOKEN) globalError = "GITHUB_ORGTOKEN environment variable not set.";
 if (!GITHUB_ORGID) globalError = "GITHUB_ORGID environment variable not set.";
@@ -205,7 +205,7 @@ router.get('/list/:username', async (request, response) =>
     const signees = globalSignees;
     let signatures = signees.get(request.params.username);
 
-    if (!signatures)
+    if (!signatures || signatures.length < 1)
     {
         response.status(404).send("Not found");
         return;
@@ -233,16 +233,9 @@ router.get('/list/:username', async (request, response) =>
         text()
         {
             // if not requesting full signature data, we only return whether a valid CLA is in place
-            // find the latest signature and see whather it has been revoked
+            // the list is already ordered using signatureComparer, so first is most recent
 
-            var lastRevoked = null;
-            var lastCreated = new Date(0);
-
-            for (const signature of signatures)
-                if (new Date(signature.created_at) > lastCreated)
-                    lastRevoked = signature.revoked_at;
-
-            if (lastRevoked)
+            if (signatures.length > 0 && signatures[0].revoked_at)
                 response.status(410).send("Revoked");
             else
                 response.send("OK");
