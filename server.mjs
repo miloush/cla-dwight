@@ -76,8 +76,8 @@ var globalError = false;
 var globalGist = null;  // { url, filename, verions[]: { version, committed, url } }
 var globalSignees = null; // Map of [] keyed by username (sorted list of signatures per user, newest first)
 
-if (!GITHUB_ORGTOKEN) globalError = "GITHUB_ORGTOKEN environment variable not set.";
-if (!GITHUB_ORGID) globalError = "GITHUB_ORGID environment variable not set.";
+if (!GITHUB_ORGTOKEN) globalError = { message: "GITHUB_ORGTOKEN environment variable not set." };
+if (!GITHUB_ORGID) globalError = { message: "GITHUB_ORGID environment variable not set." };
 
 if (!globalError)
     await globalReload(/*ignoreErrors*/ true);
