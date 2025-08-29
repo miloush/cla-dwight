@@ -64,10 +64,12 @@ const PORT = process.env.PORT || 3000;
 const BASE = process.env.BASE || "/";
 const CLA_ASSISTANT_URL = process.env.CLA_ASSISTANT_URL || "https://cla-assistant.io/";
 const CLA_LIST_AUTH = process.env.CLA_LIST_AUTH ? process.env.CLA_LIST_AUTH.split(" ") : undefined;
+const CLA_SIGN_AUTH = process.env.CLA_SIGN_AUTH ? process.env.CLA_SIGN_AUTH.split(" ") : undefined;
 const CLA_AUTH_FIELDS = process.env.CLA_AUTH_FIELDS ? process.env.CLA_AUTH_FIELDS.split(" ") : undefined;
 const GITHUB_ORGID = process.env.GITHUB_ORGID;
 const GITHUB_ORGTOKEN = process.env.GITHUB_ORGTOKEN;
 
+const CLA_FILELOCAL = process.env.CLA_FILELOCAL || "";
 const CLA_FILECACHE = process.env.CLA_FILECACHE || "";
 const CLA_FILE_GIST = path.join(CLA_FILECACHE, "gist.json");
 const CLA_FILE_SIGNEES = path.join(CLA_FILECACHE, "signees.json");
@@ -115,7 +117,7 @@ async function globalReload(ignoreErrors, disableCache)
 
         globalError = ex;
         if (!ignoreErrors)
-            throw error;
+            throw ex;
     }
 
     if (CLA_FILECACHE && gist && signees)
