@@ -51,6 +51,8 @@ import express from 'express';
 import xml from 'xmlbuilder2';
 import fs from 'fs/promises';
 import path from 'node:path';
+import multer from 'multer';
+import { randomUUID } from 'crypto';
 
 const app = express();
 const router = express.Router();
@@ -59,6 +61,9 @@ const web = axios.create();
 dotenv.config();
 web.defaults.timeout = process.env.TIMEOUT || 30000;
 app.set('view engine', 'pug');
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const BASE = process.env.BASE || "/";
@@ -73,6 +78,27 @@ const CLA_FILELOCAL = process.env.CLA_FILELOCAL || "";
 const CLA_FILECACHE = process.env.CLA_FILECACHE || "";
 const CLA_FILE_GIST = path.join(CLA_FILECACHE, "gist.json");
 const CLA_FILE_SIGNEES = path.join(CLA_FILECACHE, "signees.json");
+
+// subfolders for local signatures
+const CLA_UPLOADS_DIR = path.join(CLA_FILELOCAL, "uploads");
+const CLA_SIGNATURES_DIR = path.join(CLA_FILELOCAL, "signatures");
+
+// create uploads directory if it doesn't exist
+await fs.mkdir(CLA_FILELOCAL, { recursive: true });
+await fs.mkdir(CLA_UPLOADS_DIR, { recursive: true });
+await fs.mkdir(CLA_SIGNATURES_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+    destination: CLA_UPLOADS_DIR,
+    filename: function (req, file, cb) {
+        // generate unique filename: timestamp-originalname
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
+
+const upload = multer({
+    storage: storage
+});
 
 var globalError = false;
 var globalGist = null;  // { url, filename, verions[]: { version, committed, url } }
@@ -175,7 +201,125 @@ async function readCacheFile(path)
 }
 //#endregion
 
+//#region Local Signatures
+
+function createSignatureEntry(uploadData) {
+    const now = new Date().toISOString();
+    const uniqueId = randomUUID();
+
+    // if no time component present add T00:00:00Z to make it midnight UTC
+    const signedDate = uploadData.signedDate.includes('T') ?
+            uploadData.signedDate :
+            uploadData.signedDate + 'T00:00:00.000Z';
+    const formattedSignedDate = new Date(signedDate).toISOString();
+
+
+    const employer = uploadData.signerEmployer?.trim() || '';
+    const isEmployed = employer && employer.toLowerCase() !== 'none';
+
+    const category = isEmployed
+        ? "(c) I am contributing as an individual because, even though I am employed, my employer has and claims no rights to my contributions."
+        : "(b) I am contributing as an individual because I am self-employed or unemployed. I have read and agree to the CLA.";
+
+    return {
+        "_id": uniqueId,
+        "created_at": formattedSignedDate,  // use the actual signing date from the form
+        "updated_at": now,                  // use current timestamp for when it was uploaded
+        "custom_fields": {
+            "name": uploadData.signerName || '',
+            "email": uploadData.signerEmail || '',
+            "employer": employer || "none",
+            "category": category
+        },
+        "gist_url": `${CLA_UPLOADS_DIR}/${uploadData.file.filename}`,
+        "gist_filename": uploadData.file.originalName || uploadData.file.filename,
+        "origin": "local",
+        "user": uploadData.signerEmail || ''
+    };
+}
+
+async function loadLocalSignatures() {
+    try {
+        // read the individual signature files from the signatures directory
+        const files = await fs.readdir(CLA_SIGNATURES_DIR);
+
+        // TODO: check if this check is necessary or if we're happy reading everything in the directory
+        const signatureFiles = files.filter(file => file.startsWith('signature-') && file.endsWith('.json'));
+
+        const signatures = [];
+        for (const file of signatureFiles) {
+            try {
+                const filePath = path.join(CLA_SIGNATURES_DIR, file);
+                const data = await fs.readFile(filePath, 'utf8');
+                const signature = JSON.parse(data);
+                signatures.push(signature);
+            } catch (error) {
+                console.warn(`Skipping failed to read signature file: ${file}`, error);
+            }
+        }
+
+        return signatures;
+    } catch (error) {
+        // assume directory doesn't exist yet, return empty array
+        return [];
+    }
+}
+
+async function addLocalSignature(signatureEntry) {
+    const filename = `signature-${signatureEntry._id}.json`;
+    const filePath = path.join(CLA_SIGNATURES_DIR, filename);
+
+    await fs.writeFile(filePath, JSON.stringify(signatureEntry, null, 2));
+    return signatureEntry;
+}
+
+async function getAllSignees() {
+    try {
+        const localSignatures = await loadLocalSignatures();
+        return mergeSignatures(globalSignees, localSignatures);
+    } catch (error) {
+        console.error('Error merging local signatures:', error);
+        return globalSignees;
+    }
+}
+
+function mergeSignatures(globalSignees, localSignatures) {
+    if (localSignatures.length === 0) {
+        return globalSignees;
+    }
+
+    const mergedSignees = new Map(globalSignees);
+
+    for (const signature of localSignatures) {
+        const username = signature.user || signature.custom_fields?.email || 'unknown';
+        const key = `${username} (local)`;
+        
+        if (mergedSignees.has(key)) {
+            mergedSignees.get(key).push(signature);
+        } else {
+            mergedSignees.set(key, [signature]);
+        }
+    }
+
+    mergedSignees.timestamp = globalSignees.timestamp;
+
+    return mergedSignees;
+}
+
+//#endregion
+
+
+
 //#region Web Server
+
+// serve uploaded files statically with authentication
+app.use(`/${CLA_UPLOADS_DIR}`, (request, response, next) => {
+    if (needsAuthorization(request)) {
+        response.set('WWW-Authenticate', 'Basic realm="CLA"');
+        return response.status(401).send("Authorization required");
+    }
+    next();
+}, express.static(CLA_UPLOADS_DIR));
 
 router.get('/status', (request, response) =>
 {
@@ -183,6 +327,44 @@ router.get('/status', (request, response) =>
         response.status(503).send(globalError.message);
     else
         response.status(200).send("OK");
+});
+
+router.post('/upload', upload.single('cla-file'), async (request, response) =>
+{
+    try {
+        const { file, body } = request;
+
+        if (!file) {
+            return response.redirect('list?error=No file uploaded');
+        }
+
+        const uploadData = {
+            file: {
+                filename: file.filename,
+                originalName: file.originalname,
+                size: file.size,
+                path: file.path,
+                mimetype: file.mimetype
+            },
+            signerName: body['signer-name'],
+            signerEmail: body['signer-email'],
+            signerEmployer: body['signer-employer'],
+            signedDate: body['signed-date']
+        };
+
+        const signature = createSignatureEntry(uploadData);
+        await addLocalSignature(signature);
+
+        console.log('Signature added to local storage:', signature);
+
+        // Redirect back to list with success message
+        response.redirect('list?success=CLA uploaded and signature recorded successfully');
+
+    } catch (error) {
+        console.error('Upload error:', error);
+        // Redirect back with error parameter
+        response.redirect('list?error=Upload failed: ' + error.message);
+    }
 });
 
 router.get('/reload', async (request, response) =>
@@ -204,7 +386,7 @@ router.get('/list/:username', async (request, response) =>
     if (request.query.reload == "true")
         await globalReload(/*ignoreErrors*/ false, /*disableCache*/ true);
 
-    const signees = globalSignees;
+    const signees = await getAllSignees();
     let signatures = signees.get(request.params.username);
 
     if (!signatures || signatures.length < 1)
@@ -268,7 +450,7 @@ router.get('/list', async (request, response) =>
         fresh = true;
     }
 
-    const signees = globalSignees;
+    const signees = await getAllSignees();
 
     response.status(200);
     response.format({
@@ -277,7 +459,7 @@ router.get('/list', async (request, response) =>
             const sortedSignees = [...signees].sort(signeeComparer); // Map entries
             const count = sortedSignees.reduce((c, s) => c + s[1].length, 0);
 
-            // CLA can have custom fields (they can differ version to version), 
+            // CLA can have custom fields (they can differ version to version),
             // collect all used ones into a set (for putting them into a table)
             const fields = signees.values().reduce((set, signee) =>
             {
@@ -295,7 +477,9 @@ router.get('/list', async (request, response) =>
                     sortedSignees: sortedSignees,
                     fields: [...fields],
                     age: fresh ? undefined : formatTimeSpan(new Date() - signees.timestamp),
-                    signatureCount: count
+                    signatureCount: count,
+                    successMessage: request.query.success,
+                    errorMessage: request.query.error
                 });
         },
         xml()
@@ -466,7 +650,7 @@ function needsAuthorization(request)
     if (!request.headers.authorization)
         return true;
 
-    try 
+    try
     {
         const auth = request.headers.authorization.split(" ");
         return auth[0] != "Basic" || CLA_LIST_AUTH.indexOf(auth[1]) < 0;
