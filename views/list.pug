@@ -101,7 +101,7 @@ body(onload="onloaded()")
 
     if canUpload
         div(id="upload")
-            form(method="POST", enctype="multipart/form-data")
+            form(method="POST", enctype="multipart/form-data", target="_self")
                 label Name:
                     input(type="text", name="name", required)
                 label Email:
