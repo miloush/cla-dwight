@@ -103,9 +103,9 @@ body(onload="onloaded()")
         div(id="upload")
             form(method="POST", enctype="multipart/form-data", target="_self")
                 label Name:
-                    input(type="text", name="name", required)
+                    input(type="text", name="name", required, oninput="triggerFilter(this.value)")
                 label Email:
-                    input(type="email", name="email", required)
+                    input(type="email", name="email", required, oninput="triggerFilter(this.value)")
                 label Employer:
                     input(type="text", name="employer")
                 label CLA file:
