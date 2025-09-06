@@ -525,7 +525,7 @@ router.all('/list', upload.single('cla'), async (request, response) =>
                     signatureCount: count,
                     canUpload,
                     uploadStatus,
-                    localBase: combineUrl(request.originalUrl, ".." + LOCALBASE + "/"),
+                    localBase: combineUrl(request.originalUrl, (request.originalUrl.endsWith("/") ? ".." : ".") + LOCALBASE + "/"),
                     combineUrl
                 });
         },
