@@ -5,6 +5,17 @@
 
 /.env
 cache/
+local/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+
+# Uploads directory (contains user-uploaded CLA files)
+local_signatures/
 
 # User-specific files
 *.rsuser

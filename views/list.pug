@@ -1,10 +1,11 @@
 html(xmlns="http://www.w3.org/1999/xhtml")
 head
     meta(charset="utf-8")
+    base(target="_blank")
     title CLA signees
     style(type="text/css").
         * { font-family: 'Segoe UI', 'Lucida Grande', sans-serif }
-        #header { margin: 1em 0; display: flex; justify-content: space-between }
+        #header { margin: 1em 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1em }
         #age a { display: inline-block; background: green; color: white; border-radius: 5px; padding: 0.25em 0.5em; margin-left: 1em; text-decoration: none }
         td, th { border: solid 1px silver; padding: 0.5em; }
         th { position: sticky; top: 0; background: white; border: solid 2px silver }
@@ -16,11 +17,27 @@ head
         tbody tr:nth-child(n+2) { display: none; }
         tr.revoked { background: pink }
         tbody input { padding: 0 0.25em; margin-left: 0.25em }
+        #upload { border: solid 1px silver; background: aliceblue; margin-bottom: 1em; padding: 1em }
+        form { display: flex; flex-wrap: wrap; margin: 0; gap: 1em; align-items: center }
+        form input { margin-left: 1em }
+        input[type=submit] { background: #004080; color: white; border: none; border-radius: 5px; padding: 0.25em 0.5em; font-size: 1em }
+        form div { color: #004080 }
+
     script(type="text/javascript").
         var tableCopy; // it is much faster to filter table not in DOM and then replace it
         function onloaded() {
             var sigs = document.getElementById("signatures");
             tableCopy = sigs.cloneNode(true);
+
+            // clean up URL parameters after showing messages
+            if (window.history && window.history.replaceState) {
+                var url = new URL(window.location);
+                if (url.searchParams.has('success') || url.searchParams.has('error')) {
+                    url.searchParams.delete('success');
+                    url.searchParams.delete('error');
+                    window.history.replaceState({}, document.title, url.toString());
+                }
+            }
         }
         function e(el) {
             var tr = el.parentElement.parentElement;
@@ -71,6 +88,7 @@ head
 
             return false;
         }
+
 body(onload="onloaded()")
     div(id="header")
         div(id="age")
@@ -80,6 +98,22 @@ body(onload="onloaded()")
         div(id="count") #{sortedSignees.length} users, #{signatureCount} signatures.
         div(id="filter")
             input(type="search", placeholder="Filter...", autocomplete="off", oninput="triggerFilter(this.value)", title="Search user, name and email")
+
+    if canUpload
+        div(id="upload")
+            form(method="POST", enctype="multipart/form-data")
+                label Name:
+                    input(type="text", name="name", required)
+                label Email:
+                    input(type="email", name="email", required)
+                label Employer:
+                    input(type="text", name="employer")
+                label CLA file:
+                    input(type="file", name="cla", required)
+                label Signed:
+                    input(type="date", name="signed", required, value=new Date().toISOString().substring(0, 10))
+                input(type="submit", value="Upload")
+                div #{uploadStatus}
 
     table(id="signatures")
         thead
@@ -95,17 +129,17 @@ body(onload="onloaded()")
         for signee of sortedSignees
             tbody
                 for signature of signee[1]
-                    tr(class=signature.revoked_at ? "revoked" : false)    
+                    tr(class=signature.revoked_at ? "revoked" : false)
                         if (signee[1].length > 1 && signature == signee[1][0])
                             td #{signature.user}
                                input(type="button", value="+", onclick="e(this)")
                         else
                             td #{signature.user}
-                        
+
                         for field of fields
                             td #{signature.custom_fields ? signature.custom_fields[field] : false}
-                        td 
-                            a(href=signature.gist_url) #{signature.gist_filename}
+                        td
+                            a(href=combineUrl(localBase, signature.gist_url)) #{signature.gist_filename}
                         if signature.gist_committed_at
                             td(title=signature.gist_committed_at)
                                 a(href=`${signature.gist_url}/{signature.gist_version}`) #{signature.gist_committed_at.substring(0, 10)}
