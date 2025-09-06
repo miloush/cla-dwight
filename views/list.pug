@@ -94,7 +94,7 @@ body(onload="onloaded()")
         div(id="age")
             if age
                 | This data is #{age} old.
-                a(href="?reload=true") Reload
+                a(href="?reload=true", target="_self") Reload
         div(id="count") #{sortedSignees.length} users, #{signatureCount} signatures.
         div(id="filter")
             input(type="search", placeholder="Filter...", autocomplete="off", oninput="triggerFilter(this.value)", title="Search user, name and email")
