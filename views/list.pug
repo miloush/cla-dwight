@@ -1,6 +1,7 @@
 html(xmlns="http://www.w3.org/1999/xhtml")
 head
     meta(charset="utf-8")
+    base(target="_blank")
     title CLA signees
     style(type="text/css").
         * { font-family: 'Segoe UI', 'Lucida Grande', sans-serif }
@@ -16,128 +17,12 @@ head
         tbody tr:nth-child(n+2) { display: none; }
         tr.revoked { background: pink }
         tbody input { padding: 0 0.25em; margin-left: 0.25em }
+        #upload { border: solid 1px silver; background: aliceblue; margin-bottom: 1em; padding: 1em }
+        form { display: flex; flex-wrap: wrap; margin: 0; gap: 1em; align-items: center }
+        form input { margin-left: 1em }
+        input[type=submit] { background: #004080; color: white; border: none; border-radius: 5px; padding: 0.25em 0.5em; font-size: 1em }
+        form div { color: #004080 }
 
-        /* Upload popup styles */
-        #upload-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-        }
-        #upload-popup {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: white;
-            padding: 2em;
-            border-radius: 8px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            min-width: 400px;
-            max-width: 500px;
-        }
-        #upload-popup h2 {
-            margin-top: 0;
-            color: #333;
-            border-bottom: 2px solid silver;
-            padding-bottom: 0.5em;
-        }
-        .form-group {
-            margin-bottom: 1em;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5em;
-            font-weight: bold;
-            color: #333;
-        }
-        .form-group input, .form-group input[type="file"] {
-            width: 100%;
-            padding: 0.5em;
-            border: 1px solid silver;
-            border-radius: 4px;
-            font-family: inherit;
-            box-sizing: border-box;
-        }
-        .form-group input[type="file"] {
-            padding: 0.5em;
-        }
-        .button-group {
-            display: flex;
-            gap: 1em;
-            justify-content: flex-end;
-            margin-top: 1.5em;
-        }
-        .button-group button {
-            display: inline-block; border-radius: 5px; padding: 0.25em 0.5em; text-decoration: none;
-            border: none;
-            cursor: pointer;
-            font-size: 1em;
-        }
-        .btn-primary {
-            background: green;
-            color: white;
-        }
-        .btn-primary:hover {
-            background: darkgreen;
-        }
-        .btn-secondary {
-            background: silver;
-            color: #333;
-        }
-        .btn-secondary:hover {
-            background: #999;
-        }
-        #upload-btn {
-            display: inline-block; background: green; color: white; border-radius: 5px; padding: 0.25em 0.5em; text-decoration: none;
-            border: none;
-            cursor: pointer;
-            font-size: 1em;
-        }
-        #upload-btn:hover {
-            background: darkgreen;
-        }
-        .message {
-            padding: 0.5em 1em;
-            margin: 1em 0;
-            border-radius: 4px;
-            position: relative;
-            padding-right: 2.5em;
-        }
-        .message.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .message.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .message .close {
-            position: absolute;
-            right: 0.5em;
-            top: 50%;
-            transform: translateY(-50%);
-            background: none;
-            border: none;
-            font-size: 1.2em;
-            cursor: pointer;
-            color: inherit;
-            padding: 0;
-            width: 1.5em;
-            height: 1.5em;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .message .close:hover {
-            opacity: 0.7;
-        }
     script(type="text/javascript").
         var tableCopy; // it is much faster to filter table not in DOM and then replace it
         function onloaded() {
@@ -204,53 +89,31 @@ head
             return false;
         }
 
-        function showUploadPopup() {
-            var dateString = new Date().toISOString().substring(0, 10);
-            document.getElementById('signed-date').value = dateString;
-
-            document.getElementById('upload-overlay').style.display = 'block';
-            document.addEventListener('keydown', handleEscapeKey);
-        }
-
-        function hideUploadPopup() {
-            document.getElementById('upload-overlay').style.display = 'none';
-            document.getElementById('upload-form').reset();
-            document.removeEventListener('keydown', handleEscapeKey);
-        }
-
-        function handleEscapeKey(event) {
-            if (event.key === 'Escape' || event.keyCode === 27) {
-                hideUploadPopup();
-            }
-        }
-
-        function dismissMessage(closeButton) {
-            var message = closeButton.closest('.message');
-            if (message) {
-                message.style.display = 'none';
-            }
-        }
-
 body(onload="onloaded()")
-    if successMessage
-        div(class="message success", id="success-message")
-            | #{successMessage}
-            button(class="close", onclick="dismissMessage(this)") ×
-    if errorMessage
-        div(class="message error", id="error-message")
-            | #{errorMessage}
-            button(class="close", onclick="dismissMessage(this)") ×
-
     div(id="header")
         div(id="age")
             if age
                 | This data is #{age} old.
                 a(href="?reload=true") Reload
         div(id="count") #{sortedSignees.length} users, #{signatureCount} signatures.
-        div(id="actions")
-            button(id="upload-btn", onclick="showUploadPopup()") Upload CLA
         div(id="filter")
             input(type="search", placeholder="Filter...", autocomplete="off", oninput="triggerFilter(this.value)", title="Search user, name and email")
+
+    if canUpload
+        div(id="upload")
+            form(method="POST", enctype="multipart/form-data")
+                label Name:
+                    input(type="text", name="name", required)
+                label Email:
+                    input(type="email", name="email", required)
+                label Employer:
+                    input(type="text", name="employer")
+                label CLA file:
+                    input(type="file", name="cla", required)
+                label Signed:
+                    input(type="date", name="signed", required, value=new Date().toISOString().substring(0, 10))
+                input(type="submit", value="Upload")
+                div #{uploadStatus}
 
     table(id="signatures")
         thead
@@ -276,7 +139,7 @@ body(onload="onloaded()")
                         for field of fields
                             td #{signature.custom_fields ? signature.custom_fields[field] : false}
                         td
-                            a(href=signature.gist_url) #{signature.gist_filename}
+                            a(href=combineUrl(localBase, signature.gist_url)) #{signature.gist_filename}
                         if signature.gist_committed_at
                             td(title=signature.gist_committed_at)
                                 a(href=`${signature.gist_url}/{signature.gist_version}`) #{signature.gist_committed_at.substring(0, 10)}
@@ -285,32 +148,3 @@ body(onload="onloaded()")
                         td(title=signature.created_at) #{signature.created_at.substring(0, 10)}
                         td(title=signature.revoked_at) #{signature.revoked_at ? signature.revoked_at.substring(0, 10) : ""}
                         td #{signature.origin}
-
-    div(id="upload-overlay")
-        div(id="upload-popup")
-            h2 Upload CLA Signature
-            form(id="upload-form", method="POST", action="upload", enctype="multipart/form-data")
-
-                div(class="form-group")
-                    label(for="signer-name") Full Name:
-                    input(type="text", id="signer-name", name="signer-name", required)
-
-                div(class="form-group")
-                    label(for="signer-email") Email:
-                    input(type="email", id="signer-email", name="signer-email", required)
-
-                div(class="form-group")
-                    label(for="signer-employer") Employer:
-                    input(type="text", id="signer-employer", name="signer-employer")
-
-                div(class="form-group")
-                    label(for="cla-file") CLA File:
-                    input(type="file", id="cla-file", name="cla-file", required)
-
-                div(class="form-group")
-                    label(for="signed-date") Date Signed:
-                    input(type="date", id="signed-date", name="signed-date", required)
-
-                div(class="button-group")
-                    button(type="button", class="btn-secondary", onclick="hideUploadPopup()") Cancel
-                    button(type="submit", class="btn-primary") Upload CLA
