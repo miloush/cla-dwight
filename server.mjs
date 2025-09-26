@@ -17,7 +17,13 @@
 //                        When local storage is enabled, accepts POST requests.
 //                        This call can optionally be password-protected (see CLA_LIST_AUTH and CLA_SIGN_AUTH).
 //
-//    BASE/list/username  Returns a list of all signatures for a given GitHub username (as status, json or xml).
+//    BASE/list/username  Returns a list of all signatures for a given GitHub username or a custom lookup field
+//                        if enabled using CLA_LOOKUP_FIELDS (as status, json or xml).
+//                        404 no signature found, 200 valid signature exists, 410 signature revoked
+//                        Use ?reload=true to force using the most recent data.
+//                        Note that even if /list API is password protected, this one is not.
+//
+//    BASE/get/id         Retuns single signature based on its unique _id value (as status, json or xml).
 //                        404 no signature found, 200 valid signature exists, 410 signature revoked
 //                        Use ?reload=true to force using the most recent data.
 //                        Note that even if /list API is password protected, this one is not.
@@ -94,7 +100,7 @@ const GITHUB_ORGTOKEN = process.env.GITHUB_ORGTOKEN;
 const CLA_FILELOCAL = process.env.CLA_FILELOCAL || "";
 const CLA_FILECACHE = process.env.CLA_FILECACHE || "";
 const CLA_FILE_GIST = path.join(CLA_FILECACHE, "gist.json");
-const CLA_FILE_SIGNEES = path.join(CLA_FILECACHE, "signees.json");
+const CLA_FILE_SIGNATURES = path.join(CLA_FILECACHE, "signatures.json");
 const CLA_DIR_UPLOADS = path.join(CLA_FILELOCAL, "uploads");
 const CLA_DIR_SIGNEES = path.join(CLA_FILELOCAL, "signatures");
 
@@ -111,6 +117,7 @@ var globalError = false; // { message }
 var globalGist = null;  // { url, filename, verions[]: { version, committed, url } }
 var globalSignees = null; // Map of [] keyed by username (sorted list of signatures per user, newest first)
 var globalLookups = null; // Map of Set with usernames keyed by custom fields
+var globalSignatures = null; // Map of signatures keyed by their id
 
 if (!GITHUB_ORGTOKEN) globalError = { message: "GITHUB_ORGTOKEN environment variable not set." };
 if (!GITHUB_ORGID) globalError = { message: "GITHUB_ORGID environment variable not set." };
@@ -123,7 +130,7 @@ if (!globalError)
 async function globalReload(ignoreErrors, disableCache)
 {
     let gist = null;
-    let signees = null;
+    let signatures = null;
     let gotCached = false;
     let localPromise = null;
     if (CLA_FILELOCAL)
@@ -132,7 +139,7 @@ async function globalReload(ignoreErrors, disableCache)
     try
     {
         gist = await getGist();
-        signees = await getSignees(gist);
+        signatures = await getSignatures(gist);
         globalError = null;
     }
     catch (ex)
@@ -144,7 +151,7 @@ async function globalReload(ignoreErrors, disableCache)
             {
                 console.info("Trying data from file cache instead...");
                 gist = await readCacheFile(CLA_FILE_GIST);
-                signees = await readCacheFile(CLA_FILE_SIGNEES);
+                signatures = await readCacheFile(CLA_FILE_SIGNATURES);
                 gotCached = true;
                 ex = null;
             }
@@ -155,16 +162,24 @@ async function globalReload(ignoreErrors, disableCache)
             }
 
         globalError = ex;
-        if (ex && !ignoreErrors)
-            throw ex;
+        if (ex)
+        {
+            if (ignoreErrors)
+                return;
+            else
+                throw ex;
+        }
     }
 
-    if (!gotCached && CLA_FILECACHE && gist && signees)
+    const signees = createSignees(signatures);
+    const lookups = createLookups(signees);
+
+    if (!gotCached && CLA_FILECACHE && gist && signatures)
         try
         {
             console.info("Saving data to file cache...");
             await writeCacheFile(CLA_FILE_GIST, gist);
-            await writeCacheFile(CLA_FILE_SIGNEES, signees);
+            await writeCacheFile(CLA_FILE_SIGNATURES, signatures);
         }
         catch (ex)
         {
@@ -174,9 +189,9 @@ async function globalReload(ignoreErrors, disableCache)
     if (localPromise)
         try
         {
-            const signatures = await localPromise;
-            for (const signature of signatures)
-                addLocalSignature(signees, signature, /*sort*/ true);
+            const localSignatures = await localPromise;
+            for (const signature of localSignatures)
+                addLocalSignature(signatures, signees, lookups, signature, /*sort*/ true);
         }
         catch (exlo)
         {
@@ -184,12 +199,15 @@ async function globalReload(ignoreErrors, disableCache)
         }
 
     globalGist = gist;
+    globalSignatures = signatures;
     globalSignees = signees;
-    globalLookups = createLookups(signees);
+    globalLookups = lookups;
 }
 
-function addLocalSignature(signees, signature, sort)
+function addLocalSignature(allSignatures, signees, lookups, signature, sort)
 {
+    allSignatures.set(signature._id, signature);
+
     if (signees.has(signature.user))
     {
         const signatures = signees.get(signature.user);
@@ -200,7 +218,7 @@ function addLocalSignature(signees, signature, sort)
     else
         signees.set(signature.user, [signature]);
 
-    addToLookup(globalLookup, signature);
+    addToLookup(lookups, signature);
 }
 
 async function writeCacheFile(path, data)
@@ -242,6 +260,7 @@ async function readCacheFile(path)
         }
     });
 }
+
 //#endregion
 
 //#region Local Signatures
@@ -384,6 +403,44 @@ router.get('/reload', async (request, response) =>
     }
 });
 
+router.get('/get/:id', async (request, response) =>
+{
+    if (request.query.reload == "true")
+        await globalReload(/*ignoreErrors*/ false, /*disableCache*/ true);
+
+    const signatures = globalSignatures;
+    let signature = signatures.get(request.params.id);
+
+    if (!signature)
+    {
+        response.status(404).send("Not found");
+        return;
+    }
+
+    // remove private fields if not authorized
+    if (CLA_AUTH_FIELDS && needsAuthorization(request, CLA_LIST_AUTH))
+        signature = removeAuthFields(signature);
+
+    response.status(200);
+    response.format({
+        text()
+        {
+            // if not requesting full signature data, we only return whether a valid CLA is in place
+            if (signature.revoked_at)
+                response.status(410).send("Revoked");
+            else
+                response.send("OK");
+        },
+        html() { this.text(); },
+        xml()
+        {
+            response.send(xml.create({ signature }).end());
+        },
+        json() { response.send(signature); },
+        default() { this.text(); }
+    });
+});
+
 router.get('/list/:username', async (request, response) =>
 {
     if (request.query.reload == "true")
@@ -431,16 +488,7 @@ router.get('/list/:username', async (request, response) =>
     {
         signatures = Array.from(signatures);
         for (let i = 0; i < signatures.length; i++)
-        {
-            if (signatures[i].custom_fields)
-            {
-                const censored = { ...signatures[i] };
-                censored.custom_fields = { ...censored.custom_fields };
-                for (const property of CLA_AUTH_FIELDS)
-                    delete censored.custom_fields[property];
-                signatures[i] = censored;
-            }
-        }
+            signatures[i] = removeAuthFields(signatures[i]);
     }
 
     response.status(200);
@@ -455,7 +503,7 @@ router.get('/list/:username', async (request, response) =>
             else
                 response.send("OK");
         },
-        html() { this.text() },
+        html() { this.text(); },
         xml()
         {
             const root = { signatures: { '@timestamp': signees.timestamp.toISOString(), signature: signatures } };
@@ -502,7 +550,7 @@ router.all('/list', upload.single('cla'), async (request, response) =>
 
                     const signature = signatureFromUpload(request, formData);
                     await writeLocalSignature(signature);
-                    addLocalSignature(globalSignees, signature, /*sort*/ true);
+                    addLocalSignature(globalSignatures, globalSignees, globalLookups, signature, /*sort*/ true);
 
                     uploadStatus = "CLA added succesfully.";
                 }
@@ -639,50 +687,33 @@ function getGist()
         {
             throw new Error("Failed to receive gist for the organization.", { cause: error });
         });
-};
+}
 
-// Get list of all users who signed the CLA
+// Get list of all CLA signatures
 // Note: Currently the CLA assistant fails unless we ask per version.
-async function getSignees(gist)
+async function getSignatures(gist)
 {
     const perVersionSignatures = new Array(gist.versions.length);
 
-    console.info("Getting list of signees...");
+    console.info("Getting list of signatures...");
 
     //  The CLA server seems to be rate limiting concurrent connections, so reverting to sequential
 
     for (let i = 0; i < gist.versions.length; i++)
-        perVersionSignatures[i] = await getSignatures(gist, gist.versions[i].version);
+        perVersionSignatures[i] = await getSignaturesInVersion(gist, gist.versions[i].version);
 
-    const values = perVersionSignatures;
-
-    //  return await Promise.all(perVersionSignatures)
-    //      .then(function (values)
-    //      {
-    const signees = values.flat().reduce((map, signature) =>
+    const allSignatures = perVersionSignatures.flat().reduce((map, signature) =>
     {
-        if (map.has(signature.user))
-            map.get(signature.user).push(signature);
-        else
-            map.set(signature.user, [signature]);
+        map.set(signature._id, signature);
         return map;
     }, new Map());
 
-    signees.timestamp = new Date();
-
-    for (const signee of signees.values())
-        signee.sort(signatureComparer);
-
-    return signees;
-    //      })
-    //      .catch(function (error)
-    //      {
-    //          throw new Error("Failed to receive list of signees.", { cause: error });
-    //      });
-};
+    allSignatures.timestamp = new Date();
+    return allSignatures;
+}
 
 // Get list of all signatures for a specific version of the CLA
-function getSignatures(gist, gistVersion)
+function getSignaturesInVersion(gist, gistVersion)
 {
     console.debug(`Getting signees for version ${gistVersion}...`);
 
@@ -727,6 +758,30 @@ function getSignatures(gist, gistVersion)
         });
 };
 
+// Create a Map of signatures keyed by username
+function createSignees(signatures)
+{
+    if (!signatures)
+        return null;
+
+    const signees = signatures.values().reduce((map, signature) =>
+    {
+        if (map.has(signature.user))
+            map.get(signature.user).push(signature);
+        else
+            map.set(signature.user, [signature]);
+        return map;
+    }, new Map());
+
+    signees.timestamp = signatures.timestamp;
+
+    for (const signee of signees.values())
+        signee.sort(signatureComparer);
+
+    return signees;
+}
+
+// Create a Map of usernames keyed by custom fields
 function createLookups(signees)
 {
     if (!CLA_LOOKUP_FIELDS)
@@ -744,23 +799,27 @@ function createLookups(signees)
     return lookups;
 }
 
-function addToLookup(lookup, signature)
+// Add custom fields from a signature to a lookup
+function addToLookup(lookups, signature)
 {
-    if (lookup && signature && signature.custom_fields)
-        for (const field of CLA_LOOKUP_FIELDS)
-        {
-            const fieldValue = signature.custom_fields[field];
-            if (fieldValue)
+    if (lookups && signature)
+    {
+        if (signature.custom_fields)
+            for (const field of CLA_LOOKUP_FIELDS)
             {
-                let usernames = lookup.get(fieldValue);
-                if (!usernames)
+                const fieldValue = signature.custom_fields[field];
+                if (fieldValue)
                 {
-                    usernames = new Set();
-                    lookup.set(fieldValue, usernames);
+                    let usernames = lookups.get(fieldValue);
+                    if (!usernames)
+                    {
+                        usernames = new Set();
+                        lookups.set(fieldValue, usernames);
+                    }
+                    usernames.add(signature.user);
                 }
-                usernames.add(signature.user);
             }
-        }
+    }
 }
 
 //#endregion
@@ -798,6 +857,21 @@ function getBasicUserName(request, authList)
         console.error(ex);
         return null;
     }
+}
+
+// Removes fields specified in CLA_AUTH_FIELDS from a signature (returns the same instance if not aplicable)
+function removeAuthFields(signature)
+{
+    if (CLA_AUTH_FIELDS && signature.custom_fields)
+    {
+        const censored = { ...signature };
+        censored.custom_fields = { ...censored.custom_fields };
+        for (const property of CLA_AUTH_FIELDS)
+            delete censored.custom_fields[property];
+        return censored;
+    }
+
+    return signature;
 }
 
 // Naive date diff formatting
