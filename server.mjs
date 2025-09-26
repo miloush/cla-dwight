@@ -41,6 +41,9 @@
 //                        The value should be space-separated base64-encoded username:password values.
 //    CLA_AUTH_FIELDS     A space-separated list of field names in custom_fields that are considered private.
 //                        The /list/username API will remove these fields unless client authorizes.
+//    CLA_LOOKUP_FIELDS   A space-separated list of field names in custom_fields that can be used to query CLA status
+//                        instead of username using the BASE/list/username endpoint. If a field value maps to several
+//                        different usernames, all corresponding signatures will be considered as belonging to one user.
 //    CLA_FILECACHE       Directory path where to store responses from CLA assistant as files.
 //                        If present, the file data will be used when the call to the CLA assistant fails,
 //                        unless reload is explicitly requested.
@@ -84,6 +87,7 @@ const CLA_ASSISTANT_URL = process.env.CLA_ASSISTANT_URL || "https://cla-assistan
 const CLA_LIST_AUTH = process.env.CLA_LIST_AUTH ? process.env.CLA_LIST_AUTH.split(" ") : undefined;
 const CLA_SIGN_AUTH = process.env.CLA_SIGN_AUTH ? process.env.CLA_SIGN_AUTH.split(" ") : undefined;
 const CLA_AUTH_FIELDS = process.env.CLA_AUTH_FIELDS ? process.env.CLA_AUTH_FIELDS.split(" ") : undefined;
+const CLA_LOOKUP_FIELDS = process.env.CLA_LOOKUP_FIELDS ? process.env.CLA_LOOKUP_FIELDS.split(" ") : undefined;
 const GITHUB_ORGID = process.env.GITHUB_ORGID;
 const GITHUB_ORGTOKEN = process.env.GITHUB_ORGTOKEN;
 
@@ -106,6 +110,7 @@ if (CLA_FILELOCAL)
 var globalError = false; // { message }
 var globalGist = null;  // { url, filename, verions[]: { version, committed, url } }
 var globalSignees = null; // Map of [] keyed by username (sorted list of signatures per user, newest first)
+var globalLookups = null; // Map of Set with usernames keyed by custom fields
 
 if (!GITHUB_ORGTOKEN) globalError = { message: "GITHUB_ORGTOKEN environment variable not set." };
 if (!GITHUB_ORGID) globalError = { message: "GITHUB_ORGID environment variable not set." };
@@ -180,19 +185,22 @@ async function globalReload(ignoreErrors, disableCache)
 
     globalGist = gist;
     globalSignees = signees;
+    globalLookups = createLookups(signees);
 }
 
-function addLocalSignature(map, signature, sort)
+function addLocalSignature(signees, signature, sort)
 {
-    if (map.has(signature.user))
+    if (signees.has(signature.user))
     {
-        const signatures = map.get(signature.user);
+        const signatures = signees.get(signature.user);
         signatures.push(signature);
         if (sort)
             signatures.sort(signatureComparer);
     }
     else
-        map.set(signature.user, [signature]);
+        signees.set(signature.user, [signature]);
+
+    addToLookup(globalLookup, signature);
 }
 
 async function writeCacheFile(path, data)
@@ -383,6 +391,34 @@ router.get('/list/:username', async (request, response) =>
 
     const signees = globalSignees;
     let signatures = signees.get(request.params.username);
+
+    // try looking up using custom fields if enabled
+    if (!signatures || signatures.length < 1)
+    {
+        const lookup = globalLookups;
+        if (lookup)
+        {
+            const usernames = lookup.get(request.params.username);
+            if (!usernames || usernames.size < 1)
+            {
+                response.status(404).send("Not found");
+                return;
+            }
+
+            if (usernames.size == 1)
+                signatures = signees.get(usernames.values().next().value);
+            else
+            {
+                signatures = [];
+                for (const username of usernames)
+                {
+                    const perUsername = signees.get(username);
+                    if (perUsername)
+                        signatures.push(...perUsername);
+                }
+            }
+        }
+    }
 
     if (!signatures || signatures.length < 1)
     {
@@ -690,6 +726,43 @@ function getSignatures(gist, gistVersion)
             throw new Error(`Failed to receive list of signees for version ${gistVersion}.`, { cause: error });
         });
 };
+
+function createLookups(signees)
+{
+    if (!CLA_LOOKUP_FIELDS)
+        return null;
+
+    console.info("Creating lookup from custom fields...");
+
+    const lookups = new Map();
+
+    if (signees)
+        for (const signee of signees.values())
+            for (const signature of signee)
+                 addToLookup(lookups, signature)
+
+    return lookups;
+}
+
+function addToLookup(lookup, signature)
+{
+    if (lookup && signature && signature.custom_fields)
+        for (const field of CLA_LOOKUP_FIELDS)
+        {
+            const fieldValue = signature.custom_fields[field];
+            if (fieldValue)
+            {
+                let usernames = lookup.get(fieldValue);
+                if (!usernames)
+                {
+                    usernames = new Set();
+                    lookup.set(fieldValue, usernames);
+                }
+                usernames.add(signature.user);
+            }
+        }
+}
+
 //#endregion
 
 //#region Helpers
